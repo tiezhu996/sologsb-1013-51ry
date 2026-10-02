@@ -197,6 +197,116 @@
         </div>
       </section>
 
+      <section class="emergency-panel paper-surface">
+        <div class="panel-heading emergency-heading">
+          <div><small>EMERGENCY UNDERSTUDY</small><h2>主演临时失声 · 替补方案</h2></div>
+          <span class={{if this.activeSwitchRows.length "emergency-live" "emergency-idle"}}>{{if this.activeSwitchRows.length (concat this.activeSwitchRows.length " 项替补中") "未启用"}}</span>
+        </div>
+
+        <div class="emergency-body">
+          <PaperSelect
+            @label="失声主演（按角色）"
+            @options={{this.principalOptionsList}}
+            @optionLabelPath="label"
+            @selected={{this.emergencyPrincipalSelected}}
+            @onChange={{this.selectEmergencyRole}}
+            class="emergency-select"
+          />
+
+          {{#if this.emergencyPlan.eligibleNames.length}}
+            <PaperSelect
+              @label="选角经理确认的替演"
+              @options={{this.emergencyUnderstudyOptions}}
+              @optionLabelPath="name"
+              @selected={{this.emergencyUnderstudySelected}}
+              @onChange={{this.selectEmergencyUnderstudy}}
+              class="emergency-select"
+            />
+          {{/if}}
+
+          {{#if this.emergencyRole}}
+            <div class="affected-head">
+              <strong>受影响提示（{{this.emergencyPlan.cues.length}}）</strong>
+              <small>顺序、时长与同台关系取自提示表</small>
+            </div>
+            {{#each this.emergencyPlanRows as |cue|}}
+              <div class="affected-row {{if cue.conflicts.length "has-conflict"}}">
+                <div class="affected-time">
+                  <strong>{{cue.startLabel}}</strong>
+                  <small>{{cue.sceneLabel}}</small>
+                </div>
+                <div class="affected-main">
+                  <p class="affected-title">{{cue.title}}</p>
+                  {{#if cue.conflicts.length}}
+                    <ul class="conflict-list">
+                      {{#each cue.details as |detail|}}
+                        <li><span class="conflict-tag">{{detail.tag}}</span>{{detail.text}}</li>
+                      {{/each}}
+                    </ul>
+                  {{else}}
+                    <small class="ready-copy">{{cue.understudyName}} 可按时到场，换装 {{cue.changeSeconds}} 秒，无冲突。</small>
+                  {{/if}}
+                </div>
+              </div>
+            {{else}}
+              <p class="empty-copy">该主演不在任何提示的演员名单中。</p>
+            {{/each}}
+
+            <div class="emergency-summary {{if this.emergencyPlan.ok "summary-ok" "summary-blocked"}}">
+              {{#if this.emergencyPlan.ok}}
+                <span>✓ 校验通过，可切换：{{this.emergencyPlan.understudyName}} 顶替，原提示顺序与时间不变。</span>
+              {{else}}
+                <strong>冲突未解除，将保留原提示表：</strong>
+                <ul>
+                  {{#each this.emergencyPlan.conflictSummary as |summary|}}<li>{{summary}}</li>{{/each}}
+                </ul>
+              {{/if}}
+            </div>
+
+            <PaperButton
+              @raised={{true}}
+              @primary={{true}}
+              @warn={{not this.emergencyPlan.ok}}
+              @disabled={{not this.emergencyPlan.ok}}
+              @onClick={{this.executeEmergencySwitch}}
+              class="wide-button"
+            >
+              {{if this.emergencyPlan.ok "执行应急切换" "有冲突 · 不切换"}}
+            </PaperButton>
+          {{else}}
+            <p class="empty-copy">请先选择失声主演。</p>
+          {{/if}}
+
+          {{#if this.activeSwitchRows.length}}
+            <div class="active-switches">
+              <small>当前替补方案</small>
+              {{#each this.activeSwitchRows as |record|}}
+                <div class="switch-row">
+                  <div>
+                    <strong>{{record.role}}</strong>
+                    <small>{{record.originalPerformer}} → {{record.understudyName}} · {{record.cueCount}} 条提示</small>
+                  </div>
+                  <PaperButton @onClick={{fn this.restoreSwitch record}}>恢复</PaperButton>
+                </div>
+              {{/each}}
+            </div>
+          {{/if}}
+
+          <div class="roster-editor">
+            <strong class="roster-title">替演名单（选角经理）</strong>
+            <p class="roster-hint">每行：姓名 | 角色 | 可到场 HH:mm | 换装秒数；角色留空的旧名单按原演员处理。</p>
+            <PaperInput
+              @label="名单内容"
+              @textarea={{true}}
+              @passThru={{hash rows=6}}
+              @value={{this.rosterDraft}}
+              @onChange={{this.updateRosterDraft}}
+            />
+            <PaperButton @onClick={{this.saveRosterDraft}} @disabled={{not this.rosterDirty}}>保存名单</PaperButton>
+          </div>
+        </div>
+      </section>
+
       <section class="version-panel paper-surface">
         <div class="panel-heading"><div><small>LOCKED VERSIONS</small><h2>版本比较</h2></div></div>
         {{#if this.versions.length}}

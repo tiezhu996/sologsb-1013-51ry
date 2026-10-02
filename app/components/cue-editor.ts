@@ -1,12 +1,63 @@
 import Component from '@glimmer/component';
 import { tracked } from '@glimmer/tracking';
 import { action } from '@ember/object';
-import type { Cue, CueDraft, CueIssue, CueKind, Scene, ShowData, VersionDiff, VersionSnapshot } from 'stage-cue-editor/models/show';
+import type {
+  Cue,
+  CueDraft,
+  CueIssue,
+  CueKind,
+  Scene,
+  ShowData,
+  UnderstudyEntry,
+  UnderstudyPlan,
+  UnderstudySwitch,
+  VersionDiff,
+  VersionSnapshot,
+} from 'stage-cue-editor/models/show';
 import { CUE_KINDS, OWNERS } from 'stage-cue-editor/models/show';
+import {
+  applySwitch,
+  buildUnderstudyPlan,
+  parseRoster,
+  principalOptions,
+  revertSwitch,
+  serializeRoster,
+} from 'stage-cue-editor/utils/understudy';
 
 const STORAGE_KEY = 'sologsb-1013-stage-cue-editor-v1';
 const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 const uid = (prefix: string) => `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+
+const DEFAULT_ROSTER: UnderstudyEntry[] = [
+  {
+    id: 'understudy-1',
+    name: '林越',
+    role: '说书人',
+    availableFrom: '18:30',
+    changeSeconds: 120,
+  },
+  {
+    id: 'understudy-2',
+    name: '苏晴',
+    role: '说书人',
+    availableFrom: '19:50',
+    changeSeconds: 90,
+  },
+  {
+    id: 'understudy-3',
+    name: '林越',
+    role: '群演 6 人',
+    availableFrom: '18:30',
+    changeSeconds: 900,
+  },
+  {
+    id: 'understudy-4',
+    name: '韩松',
+    role: '群演 6 人',
+    availableFrom: '19:35',
+    changeSeconds: 60,
+  },
+];
 
 function cue(id: string, kind: CueKind, title: string, duration: number, owner: string, extra: Partial<Cue> = {}): Cue {
   return {
@@ -51,7 +102,10 @@ function initialShow(): ShowData {
       locked: false,
       cues: [
         cue('cue-stage-2', '舞台', '中景屏风换为朱红', 60, '', { notes: '负责人尚未确认' }),
-        cue('cue-actor-2', '演员', '群臣列队入场', 110, '赵一帆', { cast: ['群演 6 人', '侍女 4 人'], props: ['宫灯'] }),
+        cue('cue-actor-2', '演员', '群臣列队入场', 110, '赵一帆', {
+          cast: ['群演 6 人', '侍女 4 人', '说书人／周启', '群舞／林越'],
+          props: ['宫灯'],
+        }),
         cue('cue-light-2', '灯光', '暖金顶光覆盖后区', 80, '李岚', { lighting: '顶光 4、5 号 70%，色温 3200K' }),
       ],
     },
@@ -66,25 +120,36 @@ function initialShow(): ShowData {
   };
 }
 
-function loadShow(): ShowData {
+interface PersistedState {
+  show: ShowData;
+  versions: VersionSnapshot[];
+  roster?: UnderstudyEntry[];
+  switches?: UnderstudySwitch[];
+}
+
+function readStorage(): PersistedState | null {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return initialShow();
-    const parsed = JSON.parse(raw) as { show: ShowData; versions: VersionSnapshot[] };
-    return parsed.show ?? initialShow();
+    return raw ? (JSON.parse(raw) as PersistedState) : null;
   } catch {
-    return initialShow();
+    return null;
   }
 }
 
+function loadShow(): ShowData {
+  return readStorage()?.show ?? initialShow();
+}
+
 function loadVersions(): VersionSnapshot[] {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return [];
-    return (JSON.parse(raw) as { versions: VersionSnapshot[] }).versions ?? [];
-  } catch {
-    return [];
-  }
+  return readStorage()?.versions ?? [];
+}
+
+function loadRoster(): UnderstudyEntry[] {
+  return readStorage()?.roster ?? clone(DEFAULT_ROSTER);
+}
+
+function loadSwitches(): UnderstudySwitch[] {
+  return readStorage()?.switches ?? [];
 }
 
 function recalculateScene(scene: Scene): void {
@@ -121,6 +186,14 @@ export default class CueEditorComponent extends Component {
   @tracked compareVersionId = '';
   @tracked message = '';
   @tracked search = '';
+
+  // 应急替演
+  @tracked roster: UnderstudyEntry[] = loadRoster();
+  @tracked activeSwitches: UnderstudySwitch[] = loadSwitches();
+  @tracked emergencyRole = principalOptions(this.show)[0]?.key ?? '';
+  @tracked emergencyUnderstudyName = '';
+  @tracked rosterDraft = serializeRoster(loadRoster());
+  @tracked rosterDirty = false;
 
   private undoStack: ShowData[] = [];
   private redoStack: ShowData[] = [];
@@ -248,6 +321,190 @@ export default class CueEditorComponent extends Component {
   get filteredScenes() {
     const term = this.search.trim().toLowerCase();
     return this.sceneRows.filter((scene) => !term || `${scene.act}${scene.name}${scene.title}`.toLowerCase().includes(term));
+  }
+
+  // ── 应急替演切换 ────────────────────────────────────────────────
+  get principalOptionsList() {
+    return principalOptions(this.show).map((principal) => ({
+      ...principal,
+      activeSwitch: this.activeSwitches.find(
+        (item) => item.role === principal.key,
+      ),
+    }));
+  }
+
+  get emergencyPlan(): UnderstudyPlan {
+    return buildUnderstudyPlan(
+      this.show,
+      this.roster,
+      this.emergencyRole,
+      this.emergencyUnderstudyName || undefined,
+      this.activeSwitches,
+    );
+  }
+
+  get emergencyPlanRows() {
+    const labelFor: Record<string, string> = {
+      occupied: '已被占用',
+      changeover: '换装来不及',
+      doublebooked: '分身上场',
+    };
+    return this.emergencyPlan.cues.map((item) => ({
+      ...item,
+      conflictLabel: item.conflicts.map((kind) => labelFor[kind]).join('、'),
+      details: item.conflictDetails.map((detail, index) => ({
+        id: `${item.cueId}-detail-${index}`,
+        tag: labelFor[detail.kind] ?? '冲突',
+        text: detail.text,
+      })),
+    }));
+  }
+
+  get emergencyPrincipalSelected() {
+    return this.principalOptionsList.find(
+      (item) => item.key === this.emergencyRole,
+    );
+  }
+
+  get emergencyUnderstudyOptions() {
+    const plan = this.emergencyPlan;
+    return this.roster
+      .filter(
+        (entry, index, all) =>
+          plan.eligibleNames.includes(entry.name) &&
+          all.findIndex((item) => item.name === entry.name) === index,
+      )
+      .map((entry) => ({
+        name: `${entry.name}（${entry.availableFrom || '随时'} 到场 · 换装 ${entry.changeSeconds}s）`,
+        key: entry.name,
+      }));
+  }
+
+  get emergencyUnderstudySelected() {
+    const name =
+      this.emergencyUnderstudyName || this.emergencyPlan.understudyName;
+    return this.emergencyUnderstudyOptions.find((entry) => entry.key === name);
+  }
+
+  get activeSwitchRows() {
+    return this.activeSwitches.map((record) => ({
+      ...record,
+      cueCount: record.cueIds.length,
+    }));
+  }
+
+  @action
+  selectEmergencyRole(option: { key: string } | string): void {
+    this.emergencyRole = typeof option === 'string' ? option : option.key;
+    this.emergencyUnderstudyName = '';
+  }
+
+  @action
+  selectEmergencyUnderstudy(option: { key: string } | string): void {
+    this.emergencyUnderstudyName =
+      typeof option === 'string' ? option : option.key;
+  }
+
+  @action
+  updateRosterDraft(value: string): void {
+    this.rosterDraft = value;
+    this.rosterDirty = true;
+  }
+
+  @action
+  saveRosterDraft(): void {
+    this.roster = parseRoster(this.rosterDraft);
+    this.rosterDirty = false;
+    this.persist();
+    this.notify('替演名单已更新');
+  }
+
+  @action
+  executeEmergencySwitch(): void {
+    const plan = this.emergencyPlan;
+    if (!this.emergencyRole) {
+      this.notify('请先选择失声主演');
+      return;
+    }
+    // 有任何冲突（含无可用替演）时保留原提示表，只指明冲突。
+    if (!plan.ok || !plan.understudyName) {
+      this.notify(
+        '存在冲突，未切换：' + (plan.conflictSummary[0] ?? '没有可用替演'),
+      );
+      return;
+    }
+    // 同一角色一条有效切换，重复执行不追加。
+    if (this.activeSwitches.some((item) => item.role === this.emergencyRole)) {
+      this.notify('该角色已经处于替补方案，请先恢复再重新切换');
+      return;
+    }
+
+    const beforeShow = clone(this.show);
+    const beforeSwitches = clone(this.activeSwitches);
+    const { show: switched, switchRecord } = applySwitch(
+      this.show,
+      this.emergencyRole,
+      plan.understudyName,
+      new Date().toISOString(),
+    );
+
+    // 两次保存尝试：每次都从切换前快照出发，失败重试不重复追加变更；
+    // 两次均失败则恢复切换前状态。
+    const attempt = (): boolean => {
+      this.show = clone(switched);
+      this.activeSwitches = [...beforeSwitches, switchRecord];
+      try {
+        this.persist();
+        return true;
+      } catch {
+        return false;
+      }
+    };
+
+    if (!attempt() && !attempt()) {
+      this.show = beforeShow;
+      this.activeSwitches = beforeSwitches;
+      this.notify('本地存储两次保存失败，已恢复切换前状态');
+      return;
+    }
+    // 应急切换独立于文档撤销栈，由“恢复”按钮原样回滚，避免记录与提示表错位。
+    this.ensureSelection();
+    this.notify(
+      `已切换为替补方案：${plan.understudyName} 顶替，影响 ${plan.cues.length} 条提示`,
+    );
+  }
+
+  @action
+  restoreSwitch(record: UnderstudySwitch): void {
+    // 恢复同样走“快照出发 + 两次尝试”，重试不会重复回滚。
+    const beforeShow = clone(this.show);
+    const beforeSwitches = clone(this.activeSwitches);
+    const restored = revertSwitch(this.show, record);
+    const remaining = this.activeSwitches.filter(
+      (item) => item.id !== record.id,
+    );
+
+    const attempt = (): boolean => {
+      this.show = clone(restored);
+      this.activeSwitches = remaining;
+      try {
+        this.persist();
+        return true;
+      } catch {
+        return false;
+      }
+    };
+
+    if (!attempt() && !attempt()) {
+      this.show = beforeShow;
+      this.activeSwitches = beforeSwitches;
+      this.notify('本地存储两次保存失败，已恢复切换前状态');
+      return;
+    }
+    this.ensureSelection();
+    this.notify(
+      `已恢复 ${record.understudyName} 的替演切换，原提示表演员归属已还原`,
+    );
   }
 
   @action
@@ -532,7 +789,15 @@ export default class CueEditorComponent extends Component {
   }
 
   private persist(): void {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ show: this.show, versions: this.versions }));
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({
+        show: this.show,
+        versions: this.versions,
+        roster: this.roster,
+        switches: this.activeSwitches,
+      }),
+    );
   }
 
   private notify(value: string): void {
