@@ -32,7 +32,7 @@
   </section>
 
   <main class="stage-workspace">
-    <aside class="scene-rail paper-surface">
+    <aside class="scene-rail paper-surface" aria-label="幕次与场次">
       <div class="rail-heading">
         <div><small>SCENES</small><h2>幕次与场次</h2></div>
         <PaperButton @iconButton={{true}} @primary={{true}} @onClick={{this.addScene}} @title="新增场次">＋</PaperButton>
@@ -86,6 +86,8 @@
           </div>
           <div class="cue-list">
             {{#each this.cueRows as |cue|}}
+              {{! 拖拽卡片含标题等富内容，不宜设为 button；键盘可通过 Alt+↑↓ 调整顺序 }}
+              {{! template-lint-disable no-invalid-interactive }}
               <article
                 class="cue-row kind-{{cue.kindClass}} {{if cue.selected "is-selected"}}"
                 draggable="true"
@@ -132,7 +134,7 @@
       {{/if}}
     </section>
 
-    <aside class="inspector-rail">
+    <aside class="inspector-rail" aria-label="提示详情与检查">
       <section class="inspector paper-surface">
         <div class="inspector-heading">
           <div><small>{{if this.draft "CUE EDITOR" "CUE INSPECTOR"}}</small><h2>{{if this.draft "编辑提示" "提示详情"}}</h2></div>
@@ -218,6 +220,78 @@
           {{/if}}
         {{else}}
           <p class="empty-copy">尚未锁定版本。锁定后可比较当前流程与历史快照。</p>
+        {{/if}}
+      </section>
+
+      <section class="switch-panel paper-surface" aria-label="替补切换">
+        <div class="panel-heading">
+          <div><small>UNDERSTUDY SWITCH</small><h2>替补切换</h2></div>
+          <span class="switch-badge {{if this.switchPlan.conflicts.length "has-conflict"}}">
+            {{if this.switchPlan.conflicts.length (concat this.switchPlan.conflicts.length " 项冲突") (concat this.switchPlan.items.length " 条受影响")}}
+          </span>
+        </div>
+        <div class="switch-form">
+          <PaperInput @label="原演员（临时无法演出）" @value={{this.switchActor}} @onChange={{this.updateSwitchActor}} />
+          <div class="understudy-head">
+            <small>替演名单 · 选角经理确认</small>
+            <PaperButton @iconButton={{true}} @primary={{true}} @onClick={{this.addUnderstudy}} @title="添加替演">＋</PaperButton>
+          </div>
+          {{#each this.understudies as |entry|}}
+            <div class="understudy-row">
+              <PaperInput @label="替演" @value={{entry.actor}} @onChange={{fn this.updateUnderstudy entry.id "actor"}} />
+              <PaperInput @label="可顶角色（留空按原演员）" @value={{entry.rolesText}} @onChange={{fn this.updateUnderstudy entry.id "rolesText"}} />
+              <PaperInput @label="可到场" @value={{entry.availableAt}} @onChange={{fn this.updateUnderstudy entry.id "availableAt"}} />
+              <button type="button" class="row-remove" {{on "click" (fn this.removeUnderstudy entry.id)}}>×</button>
+            </div>
+          {{/each}}
+        </div>
+
+        <div class="switch-preview">
+          <small class="preview-label">受影响提示 · 切换前列出</small>
+          {{#each this.switchPlan.items as |item|}}
+            <div class="switch-item">
+              <strong>{{item.sceneLabel}} · {{item.start}}</strong>
+              <span>{{item.cueTitle}}</span>
+              <small>{{item.role}}：{{item.fromActor}} → {{item.toActor}}</small>
+            </div>
+          {{else}}
+            <p class="empty-copy">当前名单下没有需要切换的提示。</p>
+          {{/each}}
+          {{#if this.switchPlan.kept.length}}
+            <small class="preview-label">旧名单缺角色归属 · 按原演员保留</small>
+            {{#each this.switchPlan.kept as |item|}}
+              <div class="switch-item is-kept">
+                <strong>{{item.sceneLabel}} · {{item.start}}</strong>
+                <span>{{item.cueTitle}}</span>
+                <small>保留 {{item.fromActor}}（条目未标注角色）</small>
+              </div>
+            {{/each}}
+          {{/if}}
+          {{#if this.switchPlan.conflicts.length}}
+            <small class="preview-label conflict-label">存在冲突 · 保留原提示表</small>
+            {{#each this.switchPlan.conflicts as |conflict|}}
+              <div class="switch-conflict">
+                <strong>{{conflict.title}}</strong>
+                <small>{{conflict.detail}}</small>
+              </div>
+            {{/each}}
+          {{/if}}
+        </div>
+
+        <div class="switch-actions">
+          <PaperButton @raised={{true}} @primary={{true}} @onClick={{this.applyUnderstudySwitch}} class="wide-button">执行切换</PaperButton>
+        </div>
+
+        {{#if this.switchLogRows.length}}
+          <div class="switch-log">
+            <small class="preview-label">已执行切换</small>
+            {{#each this.switchLogRows as |record|}}
+              <div class="switch-log-row">
+                <strong>{{record.actor}} → 替补方案</strong>
+                <small>{{record.appliedAtLabel}} · {{record.itemCount}} 条 · {{record.summary}}</small>
+              </div>
+            {{/each}}
+          </div>
         {{/if}}
       </section>
     </aside>

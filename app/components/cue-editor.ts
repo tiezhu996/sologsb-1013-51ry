@@ -1,14 +1,41 @@
 import Component from '@glimmer/component';
 import { tracked } from '@glimmer/tracking';
 import { action } from '@ember/object';
-import type { Cue, CueDraft, CueIssue, CueKind, Scene, ShowData, VersionDiff, VersionSnapshot } from 'stage-cue-editor/models/show';
+import type {
+  Cue,
+  CueDraft,
+  CueIssue,
+  CueKind,
+  Scene,
+  ShowData,
+  SwitchPlan,
+  SwitchRecord,
+  UnderstudyEntry,
+  VersionDiff,
+  VersionSnapshot,
+} from 'stage-cue-editor/models/show';
 import { CUE_KINDS, OWNERS } from 'stage-cue-editor/models/show';
+import {
+  applySwitchPlan,
+  formatSeconds,
+  planUnderstudySwitch,
+  startSeconds,
+} from 'stage-cue-editor/utils/understudy';
 
 const STORAGE_KEY = 'sologsb-1013-stage-cue-editor-v1';
+const SWITCH_LOG_KEY = 'sologsb-1013-stage-cue-editor-switch-log-v1';
 const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
-const uid = (prefix: string) => `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+const uid = (prefix: string) =>
+  `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
 
-function cue(id: string, kind: CueKind, title: string, duration: number, owner: string, extra: Partial<Cue> = {}): Cue {
+function cue(
+  id: string,
+  kind: CueKind,
+  title: string,
+  duration: number,
+  owner: string,
+  extra: Partial<Cue> = {},
+): Cue {
   return {
     id,
     kind,
@@ -36,10 +63,24 @@ function initialShow(): ShowData {
       startTime: '19:30',
       locked: false,
       cues: [
-        cue('cue-light-1', '灯光', '观众席渐暗 · 面光起', 45, '李岚', { lighting: 'FOH 1 号面光 65%，侧光暖白 40%', notes: '开演铃后 10 秒执行' }),
-        cue('cue-actor-1', '演员', '说书人自左台入场', 90, '赵一帆', { cast: ['说书人／周启'], props: ['折扇'], notes: '追光跟随；入场后停留台中' }),
-        cue('cue-sound-1', '音响', '古琴引子淡入', 120, '陈默', { sound: 'Q1 古琴引子，-18dB 淡入 6 秒', dependsOn: ['cue-deleted-old'], notes: '旧版依赖保留用于检查示例' }),
-        cue('cue-prop-1', '道具', '月牙灯升至舞台中线', 75, '孙禾', { props: ['月牙灯'], lighting: '顶排 3 号定点' }),
+        cue('cue-light-1', '灯光', '观众席渐暗 · 面光起', 45, '李岚', {
+          lighting: 'FOH 1 号面光 65%，侧光暖白 40%',
+          notes: '开演铃后 10 秒执行',
+        }),
+        cue('cue-actor-1', '演员', '说书人自左台入场', 90, '赵一帆', {
+          cast: ['说书人／周启'],
+          props: ['折扇'],
+          notes: '追光跟随；入场后停留台中',
+        }),
+        cue('cue-sound-1', '音响', '古琴引子淡入', 120, '陈默', {
+          sound: 'Q1 古琴引子，-18dB 淡入 6 秒',
+          dependsOn: ['cue-deleted-old'],
+          notes: '旧版依赖保留用于检查示例',
+        }),
+        cue('cue-prop-1', '道具', '月牙灯升至舞台中线', 75, '孙禾', {
+          props: ['月牙灯'],
+          lighting: '顶排 3 号定点',
+        }),
       ],
     },
     {
@@ -50,9 +91,16 @@ function initialShow(): ShowData {
       startTime: '19:40',
       locked: false,
       cues: [
-        cue('cue-stage-2', '舞台', '中景屏风换为朱红', 60, '', { notes: '负责人尚未确认' }),
-        cue('cue-actor-2', '演员', '群臣列队入场', 110, '赵一帆', { cast: ['群演 6 人', '侍女 4 人'], props: ['宫灯'] }),
-        cue('cue-light-2', '灯光', '暖金顶光覆盖后区', 80, '李岚', { lighting: '顶光 4、5 号 70%，色温 3200K' }),
+        cue('cue-stage-2', '舞台', '中景屏风换为朱红', 60, '', {
+          notes: '负责人尚未确认',
+        }),
+        cue('cue-actor-2', '演员', '群臣列队入场', 110, '赵一帆', {
+          cast: ['群演 6 人', '侍女 4 人'],
+          props: ['宫灯'],
+        }),
+        cue('cue-light-2', '灯光', '暖金顶光覆盖后区', 80, '李岚', {
+          lighting: '顶光 4、5 号 70%，色温 3200K',
+        }),
       ],
     },
   ];
@@ -70,7 +118,10 @@ function loadShow(): ShowData {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return initialShow();
-    const parsed = JSON.parse(raw) as { show: ShowData; versions: VersionSnapshot[] };
+    const parsed = JSON.parse(raw) as {
+      show: ShowData;
+      versions: VersionSnapshot[];
+    };
     return parsed.show ?? initialShow();
   } catch {
     return initialShow();
@@ -87,6 +138,69 @@ function loadVersions(): VersionSnapshot[] {
   }
 }
 
+function defaultUnderstudies(): UnderstudyEntry[] {
+  return [
+    {
+      id: 'understudy-qianjin',
+      actor: '钱进',
+      rolesText: '说书人',
+      availableAt: '19:25',
+    },
+  ];
+}
+
+function normalizeUnderstudies(value: unknown): UnderstudyEntry[] {
+  if (!Array.isArray(value)) return defaultUnderstudies();
+  return value.map((raw) => {
+    const record = (raw ?? {}) as {
+      id?: unknown;
+      actor?: unknown;
+      rolesText?: unknown;
+      roles?: unknown;
+      availableAt?: unknown;
+    };
+    // 兼容旧名单：roles 数组或缺失角色归属时归并为文本，空值按原演员处理
+    const legacyRoles = Array.isArray(record.roles) ? record.roles : [];
+    const rolesText =
+      typeof record.rolesText === 'string'
+        ? record.rolesText
+        : legacyRoles
+            .filter((role): role is string => typeof role === 'string')
+            .join('、');
+    return {
+      id: typeof record.id === 'string' ? record.id : uid('understudy'),
+      actor: typeof record.actor === 'string' ? record.actor : '',
+      rolesText,
+      availableAt:
+        typeof record.availableAt === 'string' ? record.availableAt : '',
+    };
+  });
+}
+
+function loadUnderstudies(): UnderstudyEntry[] {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return defaultUnderstudies();
+    const parsed = JSON.parse(raw) as { understudies?: unknown };
+    return parsed.understudies
+      ? normalizeUnderstudies(parsed.understudies)
+      : defaultUnderstudies();
+  } catch {
+    return defaultUnderstudies();
+  }
+}
+
+function loadSwitchLog(): SwitchRecord[] {
+  try {
+    const raw = localStorage.getItem(SWITCH_LOG_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as unknown;
+    return Array.isArray(parsed) ? (parsed as SwitchRecord[]) : [];
+  } catch {
+    return [];
+  }
+}
+
 function recalculateScene(scene: Scene): void {
   let elapsed = 0;
   scene.cues.forEach((item) => {
@@ -95,20 +209,16 @@ function recalculateScene(scene: Scene): void {
   });
 }
 
-function startSeconds(value: string): number {
-  const [hour = '0', minute = '0'] = value.split(':');
-  return Number(hour) * 3600 + Number(minute) * 60;
-}
-
 function timeLabel(scene: Scene, offset: number): string {
-  const total = startSeconds(scene.startTime) + offset;
-  const hour = Math.floor((total % 86400) / 3600);
-  const minute = Math.floor((total % 3600) / 60);
-  const second = total % 60;
-  return [hour, minute, second].map((part) => String(part).padStart(2, '0')).join(':');
+  return formatSeconds(startSeconds(scene.startTime) + offset);
 }
 
-function overlaps(aStart: number, aDuration: number, bStart: number, bDuration: number): boolean {
+function overlaps(
+  aStart: number,
+  aDuration: number,
+  bStart: number,
+  bDuration: number,
+): boolean {
   return aStart < bStart + bDuration && bStart < aStart + aDuration;
 }
 
@@ -121,6 +231,9 @@ export default class CueEditorComponent extends Component {
   @tracked compareVersionId = '';
   @tracked message = '';
   @tracked search = '';
+  @tracked switchActor = '周启';
+  @tracked understudies: UnderstudyEntry[] = loadUnderstudies();
+  @tracked switchLog: SwitchRecord[] = loadSwitchLog();
 
   private undoStack: ShowData[] = [];
   private redoStack: ShowData[] = [];
@@ -136,7 +249,9 @@ export default class CueEditorComponent extends Component {
   }
 
   get selectedCue(): Cue | undefined {
-    return this.activeScene?.cues.find((item) => item.id === this.selectedCueId);
+    return this.activeScene?.cues.find(
+      (item) => item.id === this.selectedCueId,
+    );
   }
 
   get cueRows() {
@@ -148,7 +263,18 @@ export default class CueEditorComponent extends Component {
       end: timeLabel(this.activeScene as Scene, item.offset + item.duration),
       selected: item.id === this.selectedCueId,
       hasIssue: this.issues.some((issue) => issue.cueId === item.id),
-      kindClass: item.kind === '灯光' ? 'light' : item.kind === '音响' ? 'sound' : item.kind === '道具' ? 'prop' : item.kind === '演员' ? 'cast' : item.kind === '字幕' ? 'caption' : 'stage',
+      kindClass:
+        item.kind === '灯光'
+          ? 'light'
+          : item.kind === '音响'
+            ? 'sound'
+            : item.kind === '道具'
+              ? 'prop'
+              : item.kind === '演员'
+                ? 'cast'
+                : item.kind === '字幕'
+                  ? 'caption'
+                  : 'stage',
       propsLabel: item.props.join('、'),
       castLabel: item.cast.join('、'),
     }));
@@ -158,7 +284,8 @@ export default class CueEditorComponent extends Component {
     return this.show.scenes.map((scene) => ({
       ...scene,
       active: scene.id === this.activeSceneId,
-      issueCount: this.issues.filter((issue) => issue.sceneId === scene.id).length,
+      issueCount: this.issues.filter((issue) => issue.sceneId === scene.id)
+        .length,
       duration: scene.cues.reduce((total, item) => total + item.duration, 0),
     }));
   }
@@ -172,24 +299,46 @@ export default class CueEditorComponent extends Component {
   }
 
   get allCues(): Array<{ cue: Cue; scene: Scene }> {
-    return this.show.scenes.flatMap((scene) => scene.cues.map((item) => ({ cue: item, scene })));
+    return this.show.scenes.flatMap((scene) =>
+      scene.cues.map((item) => ({ cue: item, scene })),
+    );
   }
 
   get issues(): CueIssue[] {
     const issues: CueIssue[] = [];
     this.allCues.forEach(({ cue: item, scene }) => {
-      const cueStart = startSeconds(scene.startTime) + item.offset;
       if (!item.owner) {
-        issues.push({ id: `owner-${item.id}`, severity: 'error', title: '负责人空缺', detail: `${scene.act} ${scene.name}「${item.title}」尚未指定负责人。`, sceneId: scene.id, cueId: item.id });
+        issues.push({
+          id: `owner-${item.id}`,
+          severity: 'error',
+          title: '负责人空缺',
+          detail: `${scene.act} ${scene.name}「${item.title}」尚未指定负责人。`,
+          sceneId: scene.id,
+          cueId: item.id,
+        });
       }
       item.dependsOn.forEach((reference) => {
         if (!this.allCues.some((entry) => entry.cue.id === reference)) {
-          issues.push({ id: `ref-${item.id}-${reference}`, severity: 'error', title: '提示被引用但已删除', detail: `「${item.title}」仍依赖已删除的提示 ${reference}。`, sceneId: scene.id, cueId: item.id });
+          issues.push({
+            id: `ref-${item.id}-${reference}`,
+            severity: 'error',
+            title: '提示被引用但已删除',
+            detail: `「${item.title}」仍依赖已删除的提示 ${reference}。`,
+            sceneId: scene.id,
+            cueId: item.id,
+          });
         }
       });
       const previous = scene.cues[scene.cues.indexOf(item) - 1];
       if (previous && item.offset < previous.offset + previous.duration) {
-        issues.push({ id: `overlap-${item.id}`, severity: 'error', title: '同场时间冲突', detail: `「${item.title}」与上一条提示重叠。`, sceneId: scene.id, cueId: item.id });
+        issues.push({
+          id: `overlap-${item.id}`,
+          severity: 'error',
+          title: '同场时间冲突',
+          detail: `「${item.title}」与上一条提示重叠。`,
+          sceneId: scene.id,
+          cueId: item.id,
+        });
       }
     });
 
@@ -198,21 +347,52 @@ export default class CueEditorComponent extends Component {
       for (let next = index + 1; next < allCues.length; next += 1) {
         const left = allCues[index]!;
         const right = allCues[next]!;
-        if (left.cue.id === right.cue.id || left.scene.id === right.scene.id) continue;
+        if (left.cue.id === right.cue.id || left.scene.id === right.scene.id)
+          continue;
         const leftStart = startSeconds(left.scene.startTime) + left.cue.offset;
-        const rightStart = startSeconds(right.scene.startTime) + right.cue.offset;
-        if (!overlaps(leftStart, left.cue.duration, rightStart, right.cue.duration)) continue;
-        const sharedProps = left.cue.props.filter((value) => right.cue.props.includes(value));
-        const sharedCast = left.cue.cast.filter((value) => right.cue.cast.includes(value));
+        const rightStart =
+          startSeconds(right.scene.startTime) + right.cue.offset;
+        if (
+          !overlaps(
+            leftStart,
+            left.cue.duration,
+            rightStart,
+            right.cue.duration,
+          )
+        )
+          continue;
+        const sharedProps = left.cue.props.filter((value) =>
+          right.cue.props.includes(value),
+        );
+        const sharedCast = left.cue.cast.filter((value) =>
+          right.cue.cast.includes(value),
+        );
         if (sharedProps.length) {
-          issues.push({ id: `prop-${left.cue.id}-${right.cue.id}`, severity: 'warning', title: '道具撞场', detail: `「${left.cue.title}」与「${right.cue.title}」同时使用：${sharedProps.join('、')}。`, sceneId: right.scene.id, cueId: right.cue.id });
+          issues.push({
+            id: `prop-${left.cue.id}-${right.cue.id}`,
+            severity: 'warning',
+            title: '道具撞场',
+            detail: `「${left.cue.title}」与「${right.cue.title}」同时使用：${sharedProps.join('、')}。`,
+            sceneId: right.scene.id,
+            cueId: right.cue.id,
+          });
         }
         if (sharedCast.length) {
-          issues.push({ id: `cast-${left.cue.id}-${right.cue.id}`, severity: 'warning', title: '演员撞场', detail: `「${left.cue.title}」与「${right.cue.title}」同时需要：${sharedCast.join('、')}。`, sceneId: right.scene.id, cueId: right.cue.id });
+          issues.push({
+            id: `cast-${left.cue.id}-${right.cue.id}`,
+            severity: 'warning',
+            title: '演员撞场',
+            detail: `「${left.cue.title}」与「${right.cue.title}」同时需要：${sharedCast.join('、')}。`,
+            sceneId: right.scene.id,
+            cueId: right.cue.id,
+          });
         }
       }
     }
-    return issues.map((issue) => ({ ...issue, icon: issue.severity === 'error' ? '!' : 'i' }));
+    return issues.map((issue) => ({
+      ...issue,
+      icon: issue.severity === 'error' ? '!' : 'i',
+    }));
   }
 
   get selectedProps(): string {
@@ -228,26 +408,58 @@ export default class CueEditorComponent extends Component {
   }
 
   get compareVersion(): VersionSnapshot | undefined {
-    return this.versions.find((version) => version.id === this.compareVersionId);
+    return this.versions.find(
+      (version) => version.id === this.compareVersionId,
+    );
   }
 
   get versionDiff(): VersionDiff[] {
     const version = this.compareVersion;
     if (!version) return [];
-    const before = version.data.scenes.flatMap((scene) => scene.cues.map((item) => `${scene.act}/${scene.name} · ${item.title} | ${item.owner || '未指定'} | ${item.duration}s`));
-    const after = this.show.scenes.flatMap((scene) => scene.cues.map((item) => `${scene.act}/${scene.name} · ${item.title} | ${item.owner || '未指定'} | ${item.duration}s`));
-    return Array.from({ length: Math.max(before.length, after.length) }, (_, index) => ({
-      id: `diff-${index}`,
-      changed: before[index] !== after[index],
-      label: `提示 ${index + 1}`,
-      before: before[index] ?? '—',
-      after: after[index] ?? '—',
-    }));
+    const before = version.data.scenes.flatMap((scene) =>
+      scene.cues.map(
+        (item) =>
+          `${scene.act}/${scene.name} · ${item.title} | ${item.owner || '未指定'} | ${item.duration}s`,
+      ),
+    );
+    const after = this.show.scenes.flatMap((scene) =>
+      scene.cues.map(
+        (item) =>
+          `${scene.act}/${scene.name} · ${item.title} | ${item.owner || '未指定'} | ${item.duration}s`,
+      ),
+    );
+    return Array.from(
+      { length: Math.max(before.length, after.length) },
+      (_, index) => ({
+        id: `diff-${index}`,
+        changed: before[index] !== after[index],
+        label: `提示 ${index + 1}`,
+        before: before[index] ?? '—',
+        after: after[index] ?? '—',
+      }),
+    );
   }
 
   get filteredScenes() {
     const term = this.search.trim().toLowerCase();
-    return this.sceneRows.filter((scene) => !term || `${scene.act}${scene.name}${scene.title}`.toLowerCase().includes(term));
+    return this.sceneRows.filter(
+      (scene) =>
+        !term ||
+        `${scene.act}${scene.name}${scene.title}`.toLowerCase().includes(term),
+    );
+  }
+
+  get switchPlan(): SwitchPlan {
+    return planUnderstudySwitch(this.show, this.switchActor, this.understudies);
+  }
+
+  get switchLogRows() {
+    return this.switchLog.map((record) => ({
+      ...record,
+      appliedAtLabel: record.appliedAt
+        ? new Date(record.appliedAt).toLocaleString()
+        : '—',
+    }));
   }
 
   @action
@@ -276,7 +488,18 @@ export default class CueEditorComponent extends Component {
       this.notify('该场次已锁定，请先建立修订');
       return;
     }
-    this.draft = { kind, title: '', duration: 60, owner: '', lighting: '', sound: '', props: '', cast: '', notes: '', dependsOn: '' };
+    this.draft = {
+      kind,
+      title: '',
+      duration: 60,
+      owner: '',
+      lighting: '',
+      sound: '',
+      props: '',
+      cast: '',
+      notes: '',
+      dependsOn: '',
+    };
   }
 
   @action
@@ -323,10 +546,19 @@ export default class CueEditorComponent extends Component {
         owner: draft.owner,
         lighting: draft.lighting,
         sound: draft.sound,
-        props: draft.props.split(/[、,，]/).map((value) => value.trim()).filter(Boolean),
-        cast: draft.cast.split(/[、,，]/).map((value) => value.trim()).filter(Boolean),
+        props: draft.props
+          .split(/[、,，]/)
+          .map((value) => value.trim())
+          .filter(Boolean),
+        cast: draft.cast
+          .split(/[、,，]/)
+          .map((value) => value.trim())
+          .filter(Boolean),
         notes: draft.notes,
-        dependsOn: draft.dependsOn.split(/[、,，]/).map((value) => value.trim()).filter(Boolean),
+        dependsOn: draft.dependsOn
+          .split(/[、,，]/)
+          .map((value) => value.trim())
+          .filter(Boolean),
         offset: 0,
       };
       const index = scene.cues.findIndex((item) => item.id === saved.id);
@@ -367,7 +599,9 @@ export default class CueEditorComponent extends Component {
 
   @action
   copyPreviousScene(): void {
-    const index = this.show.scenes.findIndex((scene) => scene.id === this.activeSceneId);
+    const index = this.show.scenes.findIndex(
+      (scene) => scene.id === this.activeSceneId,
+    );
     const previous = this.show.scenes[index - 1];
     if (!previous) {
       this.notify('当前已是第一场');
@@ -378,7 +612,11 @@ export default class CueEditorComponent extends Component {
     copied.act = this.activeScene?.act ?? copied.act;
     copied.name = `${copied.name}-副本`;
     copied.title = `${copied.title}（复制）`;
-    copied.cues = copied.cues.map((item) => ({ ...item, id: uid('cue'), dependsOn: [] }));
+    copied.cues = copied.cues.map((item) => ({
+      ...item,
+      id: uid('cue'),
+      dependsOn: [],
+    }));
     recalculateScene(copied);
     this.mutate((show) => show.scenes.splice(index + 1, 0, copied));
     this.activeSceneId = copied.id;
@@ -387,7 +625,10 @@ export default class CueEditorComponent extends Component {
   }
 
   @action
-  updateSceneField(field: 'title' | 'startTime' | 'act' | 'name', value: string): void {
+  updateSceneField(
+    field: 'title' | 'startTime' | 'act' | 'name',
+    value: string,
+  ): void {
     this.mutate((show) => {
       const scene = show.scenes.find((item) => item.id === this.activeSceneId);
       if (scene && !scene.locked) scene[field] = value;
@@ -402,7 +643,11 @@ export default class CueEditorComponent extends Component {
       const item = scene?.cues.find((entry) => entry.id === id);
       if (!scene || !item || scene.locked) return;
       if (field === 'duration') item.duration = Math.max(1, Number(value) || 1);
-      else if (field === 'props' || field === 'cast') item[field] = String(value).split(/[、,，]/).map((entry) => entry.trim()).filter(Boolean);
+      else if (field === 'props' || field === 'cast')
+        item[field] = String(value)
+          .split(/[、,，]/)
+          .map((entry) => entry.trim())
+          .filter(Boolean);
       else Object.assign(item, { [field]: value });
       recalculateScene(scene);
     });
@@ -467,7 +712,11 @@ export default class CueEditorComponent extends Component {
 
   @action
   createRevision(): void {
-    this.mutate((show) => show.scenes.forEach((scene) => { scene.locked = false; }));
+    this.mutate((show) =>
+      show.scenes.forEach((scene) => {
+        scene.locked = false;
+      }),
+    );
     this.notify('已从当前锁定版建立可编辑修订');
   }
 
@@ -509,6 +758,97 @@ export default class CueEditorComponent extends Component {
     this.compareVersionId = version.id;
   }
 
+  @action
+  updateSwitchActor(value: string): void {
+    this.switchActor = value;
+  }
+
+  @action
+  addUnderstudy(): void {
+    this.understudies = [
+      ...this.understudies,
+      {
+        id: uid('understudy'),
+        actor: '',
+        rolesText: '',
+        availableAt: this.show.scenes[0]?.startTime ?? '19:30',
+      },
+    ];
+    this.persist();
+  }
+
+  @action
+  removeUnderstudy(id: string): void {
+    this.understudies = this.understudies.filter((entry) => entry.id !== id);
+    this.persist();
+  }
+
+  @action
+  updateUnderstudy(
+    id: string,
+    field: 'actor' | 'rolesText' | 'availableAt',
+    value: string,
+  ): void {
+    this.understudies = this.understudies.map((entry) =>
+      entry.id === id ? { ...entry, [field]: value } : entry,
+    );
+    this.persist();
+  }
+
+  @action
+  applyUnderstudySwitch(): void {
+    const plan = this.switchPlan;
+    if (plan.conflicts.length) {
+      this.notify(`存在 ${plan.conflicts.length} 项冲突，已保留原提示表`);
+      return;
+    }
+    if (!plan.items.length) {
+      this.notify('当前名单下没有需要切换的提示');
+      return;
+    }
+    const showBefore = clone(this.show);
+    const logBefore = clone(this.switchLog);
+    const next = clone(this.show);
+    applySwitchPlan(next, plan);
+    next.updatedAt = new Date().toISOString();
+    const record: SwitchRecord = {
+      id: plan.planId,
+      actor: plan.actor,
+      appliedAt: new Date().toISOString(),
+      itemCount: plan.items.length,
+      summary: [
+        ...new Set(plan.items.map((item) => `${item.role}→${item.toActor}`)),
+      ].join('、'),
+    };
+    this.undoStack.push(showBefore);
+    if (this.undoStack.length > 80) this.undoStack.shift();
+    this.redoStack = [];
+    this.show = next;
+    // 重试不重复追加：同一方案的记录先移除再写入
+    this.switchLog = [
+      ...this.switchLog.filter((entry) => entry.id !== record.id),
+      record,
+    ];
+    try {
+      this.persist();
+      this.persistSwitchLog();
+    } catch {
+      // 两处保存任一失败都要恢复切换前状态
+      this.show = showBefore;
+      this.switchLog = logBefore;
+      this.undoStack.pop();
+      try {
+        this.persist();
+        this.persistSwitchLog();
+      } catch {
+        // 恢复保存也失败时，至少保持内存中的切换前状态
+      }
+      this.notify('保存失败，已恢复切换前状态');
+      return;
+    }
+    this.notify(`已切换 ${plan.items.length} 条提示：${record.summary}`);
+  }
+
   willDestroy(): void {
     super.willDestroy();
     window.removeEventListener('keydown', this.handleKeyboard);
@@ -527,12 +867,25 @@ export default class CueEditorComponent extends Component {
   }
 
   private ensureSelection(): void {
-    if (!this.show.scenes.some((scene) => scene.id === this.activeSceneId)) this.activeSceneId = this.show.scenes[0]?.id ?? '';
-    if (!this.activeScene?.cues.some((item) => item.id === this.selectedCueId)) this.selectedCueId = this.activeScene?.cues[0]?.id ?? '';
+    if (!this.show.scenes.some((scene) => scene.id === this.activeSceneId))
+      this.activeSceneId = this.show.scenes[0]?.id ?? '';
+    if (!this.activeScene?.cues.some((item) => item.id === this.selectedCueId))
+      this.selectedCueId = this.activeScene?.cues[0]?.id ?? '';
   }
 
   private persist(): void {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ show: this.show, versions: this.versions }));
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({
+        show: this.show,
+        versions: this.versions,
+        understudies: this.understudies,
+      }),
+    );
+  }
+
+  private persistSwitchLog(): void {
+    localStorage.setItem(SWITCH_LOG_KEY, JSON.stringify(this.switchLog));
   }
 
   private notify(value: string): void {
@@ -544,7 +897,10 @@ export default class CueEditorComponent extends Component {
 
   private handleKeyboard = (event: KeyboardEvent): void => {
     const target = event.target as HTMLElement | null;
-    const inEditor = target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target?.tagName === 'SELECT';
+    const inEditor =
+      target instanceof HTMLInputElement ||
+      target instanceof HTMLTextAreaElement ||
+      target?.tagName === 'SELECT';
     const command = event.ctrlKey || event.metaKey;
     if (command && event.key.toLowerCase() === 'z') {
       event.preventDefault();

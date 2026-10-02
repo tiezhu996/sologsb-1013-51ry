@@ -723,6 +723,141 @@ kbd {
   font-size: 12px;
 }
 
+.switch-panel {
+  overflow: hidden;
+}
+
+.switch-badge {
+  padding: 3px 8px;
+  border-radius: 99px;
+  color: #2d6b58;
+  background: #eef8f4;
+  font-size: 10px;
+}
+
+.switch-badge.has-conflict {
+  color: #8e3038;
+  background: #fceff0;
+}
+
+.switch-form {
+  padding: 2px 14px 10px;
+}
+
+.understudy-head {
+  margin-top: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.understudy-head small,
+.preview-label {
+  color: #8b98a5;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: .14em;
+}
+
+.understudy-row {
+  display: grid;
+  grid-template-columns: minmax(64px, .8fr) minmax(110px, 1.3fr) 64px 22px;
+  align-items: center;
+  gap: 4px;
+}
+
+.row-remove {
+  margin-bottom: 8px;
+  border: 0;
+  color: #a13c46;
+  background: transparent;
+  font-size: 15px;
+  cursor: pointer;
+}
+
+.switch-preview {
+  padding: 9px 12px;
+  display: grid;
+  gap: 5px;
+  max-height: 250px;
+  overflow-y: auto;
+  border-top: 1px solid #edf0f2;
+}
+
+.preview-label {
+  display: block;
+  margin-top: 3px;
+}
+
+.conflict-label {
+  color: #a13c46;
+}
+
+.switch-item {
+  padding: 7px 9px;
+  display: grid;
+  gap: 2px;
+  border-left: 3px solid #4d8aaf;
+  border-radius: 6px;
+  background: #f4f8fb;
+  font-size: 10px;
+}
+
+.switch-item.is-kept {
+  border-left-color: #b6a27a;
+  background: #faf7ef;
+}
+
+.switch-item strong,
+.switch-item span,
+.switch-item small {
+  display: block;
+}
+
+.switch-item small {
+  color: var(--muted);
+}
+
+.switch-conflict {
+  padding: 7px 9px;
+  display: grid;
+  gap: 2px;
+  border-left: 3px solid var(--red);
+  border-radius: 6px;
+  color: #8e3038;
+  background: #fceff0;
+  font-size: 10px;
+}
+
+.switch-conflict small {
+  color: #a4636b;
+}
+
+.switch-actions {
+  padding: 2px 12px 12px;
+}
+
+.switch-log {
+  padding: 9px 12px 12px;
+  display: grid;
+  gap: 5px;
+  border-top: 1px solid #edf0f2;
+}
+
+.switch-log-row {
+  padding: 6px 9px;
+  display: grid;
+  gap: 2px;
+  border-radius: 6px;
+  color: #2d6b58;
+  background: #eef8f4;
+  font-size: 10px;
+}
+
+.switch-log-row small {
+  color: #5d8a7b;
+}
+
 .empty-copy {
   padding: 14px;
   color: var(--muted);
